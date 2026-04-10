@@ -4,9 +4,11 @@ Uses OAuth 2.0 client_credentials flow to get an access token,
 then fetches reservations, listings, and review data.
 """
 
+import json
 import logging
 import time
 from datetime import date, timedelta
+from pathlib import Path
 from typing import Optional
 import httpx
 
@@ -15,17 +17,44 @@ logger = logging.getLogger(__name__)
 GUESTY_API_BASE = "https://open-api.guesty.com/v1"
 GUESTY_TOKEN_URL = "https://open-api.guesty.com/oauth2/token"
 
+# Persist token to disk so restarts don't trigger a fresh OAuth call
+TOKEN_CACHE_FILE = Path("guesty_token_cache.json")
+
 
 class GuestyClient:
     def __init__(self, client_id: str, client_secret: str):
         self.client_id = client_id
         self.client_secret = client_secret
+        # Try to restore cached token from disk on startup
         self._access_token: Optional[str] = None
         self._token_expires_at: float = 0
+        self._load_token_cache()
+
+    def _load_token_cache(self):
+        """Restore token from disk cache (survives restarts)."""
+        try:
+            if TOKEN_CACHE_FILE.exists():
+                data = json.loads(TOKEN_CACHE_FILE.read_text())
+                if data.get("expires_at", 0) > time.time() + 120:
+                    self._access_token = data["access_token"]
+                    self._token_expires_at = data["expires_at"]
+                    logger.info("✅ Guesty token restored from disk cache")
+        except Exception as e:
+            logger.warning(f"Could not load Guesty token cache: {e}")
+
+    def _save_token_cache(self):
+        """Write token to disk so next restart can reuse it."""
+        try:
+            TOKEN_CACHE_FILE.write_text(json.dumps({
+                "access_token": self._access_token,
+                "expires_at": self._token_expires_at,
+            }))
+        except Exception as e:
+            logger.warning(f"Could not save Guesty token cache: {e}")
 
     async def _get_access_token(self) -> str:
-        """Fetch (or return cached) OAuth access token."""
-        if self._access_token and time.time() < self._token_expires_at - 60:
+        """Fetch (or return cached) OAuth access token. Persists to disk to survive restarts."""
+        if self._access_token and time.time() < self._token_expires_at - 120:
             return self._access_token
 
         async with httpx.AsyncClient(timeout=30) as client:
@@ -42,7 +71,8 @@ class GuestyClient:
             data = resp.json()
             self._access_token = data["access_token"]
             self._token_expires_at = time.time() + data.get("expires_in", 3600)
-            logger.info("✅ Guesty access token refreshed")
+            self._save_token_cache()
+            logger.info("✅ Guesty access token refreshed and saved to disk")
             return self._access_token
 
     async def _headers(self) -> dict:

@@ -27,6 +27,12 @@ class Settings(BaseSettings):
 
     # Photo requirements
     REQUIRED_PHOTOS_PER_TASK: int = 10
+    REQUIRED_BEFORE_PHOTOS: int = 3  # Before-cleaning damage documentation photos
+
+    # Damage detection (AI analysis via Claude)
+    ANTHROPIC_API_KEY: str = ""          # ← Anthropic API key for vision analysis
+    PROPERTY_AUTOMATION_URL: str = ""    # ← e.g. https://property-automation-production.up.railway.app
+    INTERNAL_API_KEY: str = ""           # ← shared secret between norvelco_bot and property-automation
 
     class Config:
         env_file = ".env"

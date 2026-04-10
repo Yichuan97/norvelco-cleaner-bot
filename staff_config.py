@@ -158,6 +158,15 @@ LISTING_TO_NICKNAME: dict[str, str] = {
 }
 
 
+def get_cleaner_names_by_phone(phone: str) -> list[str]:
+    """Return all cleaner names sharing a given phone number (proxy test setup)."""
+    return [
+        data["name"]
+        for data in ASSIGNEE_TO_CLEANER.values()
+        if data.get("phone") == phone
+    ]
+
+
 def get_cleaner_phone(assignee_id: str) -> str | None:
     """Return WhatsApp phone for a Guesty assignee ID, or None if not configured."""
     cleaner = ASSIGNEE_TO_CLEANER.get(assignee_id)
