@@ -13,7 +13,7 @@ import httpx
 logger = logging.getLogger(__name__)
 
 GUESTY_API_BASE = "https://open-api.guesty.com/v1"
-GUESTY_TOKEN_URL = "https://auth.guesty.com/oauth/token"
+GUESTY_TOKEN_URL = "https://open-api.guesty.com/oauth2/token"
 
 
 class GuestyClient:
