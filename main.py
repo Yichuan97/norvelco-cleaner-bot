@@ -121,6 +121,74 @@ async def trigger_celebrate_reviews():
     return {"status": "celebrated", "time": datetime.now().isoformat()}
 
 
+# ─── Test Endpoints ───────────────────────────────────────────────────────────
+
+@app.post("/test/set-before-phase")
+async def test_set_before_phase(request: Request):
+    """
+    TEST ONLY — Bypass Guesty and put a phone number directly into 'before' phase
+    so the cleaner can immediately send before-photos to test the AI damage detection flow.
+
+    Body (JSON):
+      { "phone": "7706249539", "unit": "Unit 505" }
+
+    'phone' is required. 'unit' defaults to 'Unit 505 (TEST)'.
+    """
+    body = await request.json()
+    phone = body.get("phone", "").strip()
+    unit_name = body.get("unit", "Unit 505 (TEST)")
+
+    if not phone:
+        raise HTTPException(status_code=400, detail="'phone' is required")
+
+    # Inject a fake task into state so _post_damage_report has something to reference
+    fake_task_id = "test-task-001"
+    task_manager._state.setdefault("tasks", {})[phone] = {
+        "pending": [fake_task_id],
+        "tasks_detail": {
+            fake_task_id: {
+                "_id": fake_task_id,
+                "listingId": "",
+                "listingName": unit_name,
+                "title": "Turnover Cleaning TEST",
+                "canStartAfter": datetime.now().isoformat(),
+                "mustFinishBefore": "",
+                "assigneeId": "",
+                "reservationId": "",
+            }
+        },
+        "sent_at": datetime.now().isoformat(),
+    }
+
+    # Set clean_phase to 'before'
+    task_manager._state.setdefault("clean_phase", {})[phone] = {
+        "phase": "before",
+        "before_photos": [],
+        "before_photos_b64": [],
+    }
+    task_manager._state["photo_counts"].pop(f"{phone}:photo_count", None)
+    task_manager._save_state()
+
+    # Send a WhatsApp message so the cleaner knows what to do
+    required = settings.REQUIRED_BEFORE_PHOTOS
+    await whatsapp.send_text(
+        phone,
+        f"🧪 *[TEST MODE]* Unit: *{unit_name}*\n\n"
+        f"📸 Please send {required} BEFORE photo(s) to test the damage detection system.\n\n"
+        f"Tip: try a photo with visible damage (scratch, stain, broken item) to see what the AI flags!"
+    )
+
+    logger.info(f"🧪 Test: phone {phone} set to before-phase for unit '{unit_name}'")
+    return {
+        "status": "ok",
+        "phone": phone,
+        "unit": unit_name,
+        "phase": "before",
+        "required_before_photos": required,
+        "message": f"WhatsApp message sent to {phone}. Now send {required} photo(s) to the bot."
+    }
+
+
 # ─── Debug Endpoints ──────────────────────────────────────────────────────────
 
 @app.get("/debug/tasks")
