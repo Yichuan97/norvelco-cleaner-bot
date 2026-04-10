@@ -121,6 +121,19 @@ async def trigger_celebrate_reviews():
     return {"status": "celebrated", "time": datetime.now().isoformat()}
 
 
+# ─── Debug Endpoints ──────────────────────────────────────────────────────────
+
+@app.get("/debug/tasks")
+async def debug_tasks():
+    """Show raw /v1/tasks response to verify field structure."""
+    tasks = await guesty.get_todays_cleaning_tasks()
+    return {
+        "count": len(tasks),
+        "sample": tasks[:2] if tasks else [],
+        "all_keys": list(tasks[0].keys()) if tasks else []
+    }
+
+
 # ─── Health Check ─────────────────────────────────────────────────────────────
 
 @app.get("/health")

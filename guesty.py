@@ -115,6 +115,43 @@ class GuestyClient:
                 logger.error(f"❌ Failed to fetch listing {listing_id}: {e}")
                 return None
 
+    async def get_todays_cleaning_tasks(self) -> list[dict]:
+        """
+        Fetch today's cleaning tasks from the Guesty Tasks API.
+        Uses the 'turnover cleaning' task view which is manually curated —
+        this is the source of truth (not raw checkouts, which can include
+        extended-stay guests who don't need cleaning).
+
+        Returns tasks with assignee info already embedded.
+        """
+        from datetime import date
+        today = date.today().isoformat()
+
+        params = {
+            "limit": 100,
+            "skip": 0,
+        }
+
+        async with httpx.AsyncClient(timeout=30) as client:
+            try:
+                resp = await client.get(
+                    f"{GUESTY_API_BASE}/tasks",
+                    headers=await self._headers(),
+                    params=params
+                )
+                resp.raise_for_status()
+                data = resp.json()
+                # Log the raw structure of the first task so we can verify field names
+                results = data.get("results", data if isinstance(data, list) else [])
+                if results:
+                    logger.info(f"📋 Tasks API sample task keys: {list(results[0].keys())}")
+                    logger.info(f"📋 Tasks API sample task: {results[0]}")
+                logger.info(f"📋 Fetched {len(results)} tasks from /v1/tasks")
+                return results
+            except Exception as e:
+                logger.error(f"❌ Failed to fetch tasks: {e}")
+                return []
+
     async def get_all_listings(self) -> list[dict]:
         """Get all active listings."""
         async with httpx.AsyncClient(timeout=30) as client:
