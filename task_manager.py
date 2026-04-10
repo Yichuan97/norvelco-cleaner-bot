@@ -16,9 +16,9 @@ from pathlib import Path
 from typing import Optional
 
 from whatsapp import WhatsAppClient, extract_message_data
-from guesty import GuestyClient, prioritize_cleaning_tasks
+from guesty import GuestyClient
 from config import settings
-from staff_config import get_cleaner_phone, get_cleaner_name
+from staff_config import get_cleaner_phone, get_cleaner_name, get_listing_nickname
 
 logger = logging.getLogger(__name__)
 
@@ -50,38 +50,49 @@ class TaskManager:
     async def dispatch_daily_tasks(self):
         """
         Called at 8 AM every day.
-        Fetches today's checkouts from Guesty, prioritizes them,
-        and sends each cleaner their task list via WhatsApp.
+        Fetches today's 'Turnover Cleaning' tasks from the Guesty Tasks view —
+        the manually curated source of truth — and sends each cleaner their
+        task list via WhatsApp, grouped by assignee.
         """
         logger.info("🏠 Dispatching daily cleaning tasks...")
 
-        checkouts = await self.guesty.get_today_checkouts()
-        if not checkouts:
-            logger.info("No checkouts today, nothing to dispatch.")
+        tasks = await self.guesty.get_todays_cleaning_tasks()
+        if not tasks:
+            logger.info("No cleaning tasks today, nothing to dispatch.")
             return
 
-        sorted_tasks = prioritize_cleaning_tasks(checkouts)
-
-        # Group by assigned cleaner (Guesty listing → cleaner phone)
+        # Group tasks by assignee phone
         cleaner_tasks: dict[str, list] = {}
-        for task in sorted_tasks:
-            phone = self._get_cleaner_phone(task)
+        unassigned = []
+        for task in tasks:
+            assignee_id = task.get("assigneeId", "")
+            phone = get_cleaner_phone(assignee_id)
             if phone:
                 cleaner_tasks.setdefault(phone, []).append(task)
+            else:
+                unassigned.append(task)
 
-        for cleaner_phone, tasks in cleaner_tasks.items():
-            await self._send_task_list(cleaner_phone, tasks)
+        if unassigned:
+            logger.warning(
+                f"⚠️  {len(unassigned)} tasks have no cleaner phone configured: "
+                + ", ".join(t.get("assigneeFullName", "?") or "Unassigned" for t in unassigned[:5])
+            )
+
+        for cleaner_phone, cleaner_task_list in cleaner_tasks.items():
+            await self._send_task_list(cleaner_phone, cleaner_task_list)
 
         logger.info(f"✅ Dispatched tasks to {len(cleaner_tasks)} cleaners")
 
     async def _send_task_list(self, phone: str, tasks: list[dict]):
-        """Send a prioritized task list to one cleaner.
-        Splits into chunks of 10 tasks to stay under WhatsApp's 4096-char limit.
+        """
+        Send today's task list to one cleaner via WhatsApp.
+        Tasks come from Guesty Tasks API (flat structure).
+        Splits into chunks of 10 to stay under WhatsApp's 4096-char limit.
         """
         today = datetime.now().strftime("%A, %B %d")
-        CHUNK = 10  # max tasks per message
+        CHUNK = 10
 
-        # Store ALL pending tasks in state first
+        # Store all pending task IDs in state
         task_ids = [t.get("_id", "") for t in tasks]
         self._state["tasks"][phone] = {
             "pending": task_ids,
@@ -90,7 +101,6 @@ class TaskManager:
         }
         self._save_state()
 
-        # Send in chunks
         for chunk_start in range(0, len(tasks), CHUNK):
             chunk = tasks[chunk_start:chunk_start + CHUNK]
             chunk_num = chunk_start // CHUNK + 1
@@ -102,30 +112,33 @@ class TaskManager:
                 header = f"🧹 *Good morning! Here are your tasks for {today}*\n"
 
             lines = [header]
-            global_i = chunk_start  # offset for priority labelling
 
             for i, task in enumerate(chunk, 1):
-                overall_rank = global_i + i
-                listing_name = task.get("listing", {}).get("name", "Property")
-                checkout_time = task.get("checkOut", "")[-8:-3] or "TBD"
-                checkin_time = task.get("checkIn", "")[-8:-3]
-                address = task.get("listing", {}).get("address", {}).get("full", "")
+                overall_rank = chunk_start + i
 
-                priority = "🔴 URGENT" if overall_rank == 1 and len(tasks) > 1 else f"#{overall_rank}"
-                lines.append(f"{priority} *{listing_name}*")
-                lines.append(f"   📍 {address}")
-                lines.append(f"   🚪 Checkout: {checkout_time}")
-                if checkin_time:
-                    lines.append(f"   🛎  Next guest: {checkin_time}")
+                # ── Task fields (flat Open API structure) ──────────────────
+                listing_id   = task.get("listingId", "")
+                unit_name    = get_listing_nickname(listing_id)
+                can_start    = task.get("canStartAfter") or task.get("startTime") or ""
+                must_finish  = task.get("mustFinishBefore", "")
+
+                # Parse "2026-04-10T14:00:00.000Z" → "10:00 AM"
+                checkout_time = self._format_time(can_start)
+                deadline_time = self._format_time(must_finish)
+
+                priority_label = "🔴 URGENT" if overall_rank == 1 and len(tasks) > 1 else f"#{overall_rank}"
+                lines.append(f"{priority_label} *{unit_name}*")
+                lines.append(f"   🚪 Ready after: {checkout_time}")
+                if deadline_time:
+                    lines.append(f"   ⏰ Finish by: {deadline_time}")
                 lines.append("")
 
-            # Only add footer on the last chunk
             if chunk_start + CHUNK >= len(tasks):
                 lines.append(
-                    f"📸 *Remember: Send {settings.REQUIRED_PHOTOS_PER_TASK} photos "
-                    f"(before + after) for each property to mark it complete.*"
+                    f"📸 *Send {settings.REQUIRED_PHOTOS_PER_TASK} photos "
+                    f"(before + after) per property to mark complete.*"
                 )
-                lines.append("\nReply 'DONE [property name]' when finished with each one.")
+                lines.append("\nReply DONE [unit] when finished with each one.")
 
             message = "\n".join(lines)
 
@@ -134,6 +147,24 @@ class TaskManager:
                 logger.info(f"📤 Sent tasks {chunk_start+1}-{chunk_start+len(chunk)} of {len(tasks)} to {phone}")
             except Exception as e:
                 logger.error(f"❌ Failed to send task chunk to {phone}: {e}")
+
+    @staticmethod
+    def _format_time(iso_str: str) -> str:
+        """Parse ISO datetime string → human time like '10:00 AM'. Returns '' if empty."""
+        if not iso_str:
+            return ""
+        try:
+            from datetime import timezone
+            # Parse UTC time and convert to Eastern (UTC-4 in summer, UTC-5 in winter)
+            # Using a simple fixed offset for Eastern — adjust if you use pytz
+            dt = datetime.fromisoformat(iso_str.replace("Z", "+00:00"))
+            # Convert UTC → Eastern (approximate: -4 during daylight saving)
+            eastern_hour = (dt.hour - 4) % 24
+            period = "AM" if eastern_hour < 12 else "PM"
+            display_hour = eastern_hour % 12 or 12
+            return f"{display_hour}:{dt.minute:02d} {period}"
+        except Exception:
+            return iso_str[11:16]  # fallback: just "HH:MM"
 
     # ─── Incoming Message Handler ──────────────────────────────────────────────
 
@@ -264,24 +295,9 @@ class TaskManager:
         await self.wa.send_text(phone, "\n".join(lines))
 
     def _get_cleaner_phone(self, task: dict) -> Optional[str]:
-        """
-        Map a reservation/listing to the assigned cleaner's WhatsApp number.
-        Looks up staff_config.py first, then falls back to Guesty custom fields.
-        """
-        listing_id = task.get("listing", {}).get("_id", "") or task.get("listingId", "")
-
-        # Primary: staff_config.py lookup
-        phone = get_cleaner_phone(listing_id)
-        if phone:
-            return phone
-
-        # Fallback: Guesty custom fields
-        custom_fields = task.get("listing", {}).get("customFields", [])
-        for field in custom_fields:
-            if field.get("fieldId", "").lower() in ("cleaner_phone", "cleaner_whatsapp"):
-                return field.get("value")
-
-        return None
+        """Get phone for a task's assignee. Works with both Guesty Tasks API format."""
+        assignee_id = task.get("assigneeId", "")
+        return get_cleaner_phone(assignee_id)
 
     # ─── Bad Review Warnings ───────────────────────────────────────────────────
 

@@ -117,19 +117,27 @@ class GuestyClient:
 
     async def get_todays_cleaning_tasks(self) -> list[dict]:
         """
-        Fetch today's cleaning tasks from the Guesty Tasks API.
-        Uses the 'turnover cleaning' task view which is manually curated —
-        this is the source of truth (not raw checkouts, which can include
-        extended-stay guests who don't need cleaning).
+        Fetch today's 'Turnover Cleaning' tasks from the Guesty Tasks API.
 
-        Returns tasks with assignee info already embedded.
+        These tasks are manually curated in Guesty — far more accurate than
+        raw checkouts, because guests who extend their stay are removed.
+        Each task has assigneeId + assigneeFullName already set.
+
+        Filters applied (server-side where supported, client-side as fallback):
+        - canStartAfter falls on today (the checkout/handover date)
+        - title contains 'turnover' (case-insensitive)
+        - status is not completed or canceled
         """
-        from datetime import date
-        today = date.today().isoformat()
+        today_start = f"{date.today().isoformat()}T00:00:00.000Z"
+        today_end   = f"{date.today().isoformat()}T23:59:59.999Z"
 
         params = {
             "limit": 100,
             "skip": 0,
+            # Try the most common Guesty date range param names.
+            # If these don't filter server-side, we fall back to client-side.
+            "canStartAfterFrom": today_start,
+            "canStartAfterTo":   today_end,
         }
 
         async with httpx.AsyncClient(timeout=30) as client:
@@ -141,13 +149,27 @@ class GuestyClient:
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                # Log the raw structure of the first task so we can verify field names
-                results = data.get("results", data if isinstance(data, list) else [])
-                if results:
-                    logger.info(f"📋 Tasks API sample task keys: {list(results[0].keys())}")
-                    logger.info(f"📋 Tasks API sample task: {results[0]}")
-                logger.info(f"📋 Fetched {len(results)} tasks from /v1/tasks")
-                return results
+                all_tasks = data.get("results", data if isinstance(data, list) else [])
+                logger.info(f"📋 Raw tasks from API: {len(all_tasks)}")
+
+                # Client-side filters as safety net
+                today_date = date.today().isoformat()  # "2026-04-10"
+                filtered = []
+                for t in all_tasks:
+                    status = t.get("status", "")
+                    if status in ("completed", "canceled"):
+                        continue
+                    title = t.get("title", "").lower()
+                    if "turnover" not in title:
+                        continue
+                    # Ensure canStartAfter falls on today
+                    can_start = t.get("canStartAfter") or t.get("startTime") or ""
+                    if can_start and today_date not in can_start[:10]:
+                        continue
+                    filtered.append(t)
+
+                logger.info(f"📋 Today's turnover cleaning tasks: {len(filtered)}")
+                return filtered
             except Exception as e:
                 logger.error(f"❌ Failed to fetch tasks: {e}")
                 return []
