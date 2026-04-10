@@ -31,7 +31,7 @@ class GuestyClient:
         async with httpx.AsyncClient(timeout=30) as client:
             resp = await client.post(
                 GUESTY_TOKEN_URL,
-                json={
+                data={
                     "grant_type": "client_credentials",
                     "scope": "open-api",
                     "client_id": self.client_id,
