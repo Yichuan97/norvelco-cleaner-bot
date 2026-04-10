@@ -169,36 +169,44 @@ async def test_set_before_phase(request: Request):
     task_manager._state["photo_counts"].pop(f"{phone}:photo_count", None)
     task_manager._save_state()
 
-    # Normalise phone: add US country code if 10 digits
+    # Normalise phone to E.164 — this must match what WhatsApp sends in webhook 'from' field
     wa_phone = phone if len(phone) >= 11 else f"1{phone}"
 
-    # Send a WhatsApp message so the cleaner knows what to do
-    required = settings.REQUIRED_BEFORE_PHOTOS
-    wa_status = "sent"
-    wa_error = None
-    try:
-        await whatsapp.send_text(
-            wa_phone,
-            f"🧪 *[TEST MODE]* Unit: *{unit_name}*\n\n"
-            f"📸 Please send {required} BEFORE photo(s) to test the damage detection system.\n\n"
-            f"Tip: try a photo with visible damage (scratch, stain, broken item) to see what the AI flags!"
-        )
-    except Exception as e:
-        wa_status = "failed"
-        wa_error = str(e)
-        logger.error(f"❌ Test WhatsApp send failed: {e}")
+    # Inject a fake task using the normalised phone as key (must match webhook 'from')
+    fake_task_id = "test-task-001"
+    task_manager._state.setdefault("tasks", {})[wa_phone] = {
+        "pending": [fake_task_id],
+        "tasks_detail": {
+            fake_task_id: {
+                "_id": fake_task_id,
+                "listingId": "",
+                "listingName": unit_name,
+                "title": "Turnover Cleaning TEST",
+                "canStartAfter": datetime.now().isoformat(),
+                "mustFinishBefore": "",
+                "assigneeId": "",
+                "reservationId": "",
+            }
+        },
+        "sent_at": datetime.now().isoformat(),
+    }
+    task_manager._state.setdefault("clean_phase", {})[wa_phone] = {
+        "phase": "before",
+        "before_photos": [],
+        "before_photos_b64": [],
+    }
+    task_manager._state["photo_counts"].pop(f"{wa_phone}:photo_count", None)
+    task_manager._save_state()
 
-    logger.info(f"🧪 Test: phone {phone} ({wa_phone}) set to before-phase for unit '{unit_name}'. WA: {wa_status}")
+    required = settings.REQUIRED_BEFORE_PHOTOS
+    logger.info(f"🧪 Test: {wa_phone} set to before-phase for unit '{unit_name}'")
     return {
         "status": "ok",
-        "phone": phone,
         "wa_phone": wa_phone,
         "unit": unit_name,
         "phase": "before",
         "required_before_photos": required,
-        "whatsapp": wa_status,
-        "whatsapp_error": wa_error,
-        "message": f"State set. WA send: {wa_status}. Send {required} photo(s) to the bot."
+        "next_step": f"Send any message to the bot first (e.g. 'hi') to open the WhatsApp window, then send {required} before photos."
     }
 
 
