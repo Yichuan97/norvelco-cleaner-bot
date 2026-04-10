@@ -75,33 +75,13 @@ class TaskManager:
         logger.info(f"✅ Dispatched tasks to {len(cleaner_tasks)} cleaners")
 
     async def _send_task_list(self, phone: str, tasks: list[dict]):
-        """Send a prioritized task list to one cleaner."""
+        """Send a prioritized task list to one cleaner.
+        Splits into chunks of 10 tasks to stay under WhatsApp's 4096-char limit.
+        """
         today = datetime.now().strftime("%A, %B %d")
-        lines = [f"🧹 *Good morning! Here are your tasks for {today}*\n"]
+        CHUNK = 10  # max tasks per message
 
-        for i, task in enumerate(tasks, 1):
-            listing_name = task.get("listing", {}).get("name", "Property")
-            checkout_time = task.get("checkOut", "")[-8:-3] or "TBD"
-            checkin_time = task.get("checkIn", "")[-8:-3]
-            address = task.get("listing", {}).get("address", {}).get("full", "")
-
-            priority = "🔴 URGENT" if i == 1 and len(tasks) > 1 else f"#{i}"
-            lines.append(f"{priority} *{listing_name}*")
-            lines.append(f"   📍 {address}")
-            lines.append(f"   🚪 Checkout: {checkout_time}")
-            if checkin_time:
-                lines.append(f"   🛎  Next guest: {checkin_time}")
-            lines.append("")
-
-        lines.append(
-            f"📸 *Remember: Send {settings.REQUIRED_PHOTOS_PER_TASK} photos "
-            f"(before + after) for each property to mark it complete.*"
-        )
-        lines.append("\nReply 'DONE [property name]' when finished with each one.")
-
-        message = "\n".join(lines)
-
-        # Store pending tasks for this cleaner
+        # Store ALL pending tasks in state first
         task_ids = [t.get("_id", "") for t in tasks]
         self._state["tasks"][phone] = {
             "pending": task_ids,
@@ -110,8 +90,50 @@ class TaskManager:
         }
         self._save_state()
 
-        await self.wa.send_text(phone, message)
-        logger.info(f"📤 Sent {len(tasks)} tasks to {phone}")
+        # Send in chunks
+        for chunk_start in range(0, len(tasks), CHUNK):
+            chunk = tasks[chunk_start:chunk_start + CHUNK]
+            chunk_num = chunk_start // CHUNK + 1
+            total_chunks = (len(tasks) + CHUNK - 1) // CHUNK
+
+            if total_chunks > 1:
+                header = f"🧹 *Tasks for {today} (Part {chunk_num}/{total_chunks})*\n"
+            else:
+                header = f"🧹 *Good morning! Here are your tasks for {today}*\n"
+
+            lines = [header]
+            global_i = chunk_start  # offset for priority labelling
+
+            for i, task in enumerate(chunk, 1):
+                overall_rank = global_i + i
+                listing_name = task.get("listing", {}).get("name", "Property")
+                checkout_time = task.get("checkOut", "")[-8:-3] or "TBD"
+                checkin_time = task.get("checkIn", "")[-8:-3]
+                address = task.get("listing", {}).get("address", {}).get("full", "")
+
+                priority = "🔴 URGENT" if overall_rank == 1 and len(tasks) > 1 else f"#{overall_rank}"
+                lines.append(f"{priority} *{listing_name}*")
+                lines.append(f"   📍 {address}")
+                lines.append(f"   🚪 Checkout: {checkout_time}")
+                if checkin_time:
+                    lines.append(f"   🛎  Next guest: {checkin_time}")
+                lines.append("")
+
+            # Only add footer on the last chunk
+            if chunk_start + CHUNK >= len(tasks):
+                lines.append(
+                    f"📸 *Remember: Send {settings.REQUIRED_PHOTOS_PER_TASK} photos "
+                    f"(before + after) for each property to mark it complete.*"
+                )
+                lines.append("\nReply 'DONE [property name]' when finished with each one.")
+
+            message = "\n".join(lines)
+
+            try:
+                await self.wa.send_text(phone, message)
+                logger.info(f"📤 Sent tasks {chunk_start+1}-{chunk_start+len(chunk)} of {len(tasks)} to {phone}")
+            except Exception as e:
+                logger.error(f"❌ Failed to send task chunk to {phone}: {e}")
 
     # ─── Incoming Message Handler ──────────────────────────────────────────────
 
