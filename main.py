@@ -126,11 +126,19 @@ async def trigger_celebrate_reviews():
 @app.get("/debug/tasks")
 async def debug_tasks():
     """Show raw /v1/tasks response to verify field structure."""
-    tasks = await guesty.get_todays_cleaning_tasks()
+    import httpx
+    token = await guesty._get_access_token()
+    async with httpx.AsyncClient(timeout=30) as client:
+        resp = await client.get(
+            "https://open-api.guesty.com/v1/tasks",
+            headers={"Authorization": f"Bearer {token}", "Accept": "application/json"},
+            params={"limit": 3}
+        )
+        raw = resp.json()
     return {
-        "count": len(tasks),
-        "sample": tasks[:2] if tasks else [],
-        "all_keys": list(tasks[0].keys()) if tasks else []
+        "status_code": resp.status_code,
+        "top_level_keys": list(raw.keys()) if isinstance(raw, dict) else f"list of {len(raw)}",
+        "raw": raw
     }
 
 
