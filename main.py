@@ -199,14 +199,38 @@ async def test_set_before_phase(request: Request):
     task_manager._save_state()
 
     required = settings.REQUIRED_BEFORE_PHOTOS
-    logger.info(f"🧪 Test: {wa_phone} set to before-phase for unit '{unit_name}'")
+
+    # Try sending — capture full WhatsApp error body if it fails
+    wa_status = "sent"
+    wa_error = None
+    try:
+        await whatsapp.send_text(
+            wa_phone,
+            f"🧪 *[TEST MODE]* Unit: *{unit_name}*\n\n"
+            f"📸 Please send {required} BEFORE photo(s) to test the damage detection system.\n\n"
+            f"Tip: try a photo with visible damage (scratch, stain, broken item) to see what the AI flags!"
+        )
+    except Exception as e:
+        wa_status = "failed"
+        # Capture full response body from WhatsApp so we can diagnose
+        wa_error = str(e)
+        if hasattr(e, "response"):
+            try:
+                wa_error = e.response.text
+            except Exception:
+                pass
+        logger.error(f"❌ Test WhatsApp send failed: {wa_error}")
+
+    logger.info(f"🧪 Test: {wa_phone} set to before-phase for unit '{unit_name}'. WA: {wa_status}")
     return {
         "status": "ok",
         "wa_phone": wa_phone,
         "unit": unit_name,
         "phase": "before",
         "required_before_photos": required,
-        "next_step": f"Send any message to the bot first (e.g. 'hi') to open the WhatsApp window, then send {required} before photos."
+        "whatsapp": wa_status,
+        "whatsapp_error": wa_error,
+        "next_step": f"If WA failed, check whatsapp_error for details. Otherwise send {required} before photos to the bot."
     }
 
 
