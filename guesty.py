@@ -149,37 +149,38 @@ class GuestyClient:
         """
         Fetch today's 'Turnover Cleaning' tasks from the Guesty Tasks API.
 
-        These tasks are manually curated in Guesty — far more accurate than
-        raw checkouts, because guests who extend their stay are removed.
-        Each task has assigneeId + assigneeFullName already set.
-
-        Filters applied (server-side where supported, client-side as fallback):
-        - canStartAfter falls on today (the checkout/handover date)
-        - title contains 'turnover' (case-insensitive)
-        - status is not completed or canceled
+        Uses the internal Guesty tasks API (app.guesty.com/api/tasks/) with the
+        correct filters JSON format, matching exactly what the Guesty UI sends.
+        Falls back to client-side date filtering as a safety net.
         """
-        today_start = f"{date.today().isoformat()}T00:00:00.000Z"
-        today_end   = f"{date.today().isoformat()}T23:59:59.999Z"
+        import json as _json
+
+        # Use the internal API endpoint with the correct filters format
+        # (confirmed by inspecting Guesty UI network requests)
+        filters = _json.dumps({
+            "canStartAfter": {"@today": True},
+            "title": {"@contains": "turnover cleaning"},
+            "status": {"@nin": ["completed", "canceled"]},
+        })
 
         params = {
             "limit": 100,
             "skip": 0,
-            # Try the most common Guesty date range param names.
-            # If these don't filter server-side, we fall back to client-side.
-            "canStartAfterFrom": today_start,
-            "canStartAfterTo":   today_end,
+            "filters": filters,
+            "timezone": "America/New_York",
+            "sort": "canStartAfter",
         }
 
         async with httpx.AsyncClient(timeout=30) as client:
             try:
                 resp = await client.get(
-                    f"{GUESTY_API_BASE}/tasks",
+                    "https://app.guesty.com/api/tasks/",
                     headers=await self._headers(),
                     params=params
                 )
                 resp.raise_for_status()
                 data = resp.json()
-                all_tasks = data.get("results", data if isinstance(data, list) else [])
+                all_tasks = data.get("data", data.get("results", data if isinstance(data, list) else []))
                 logger.info(f"📋 Raw tasks from API: {len(all_tasks)}")
 
                 # Client-side filters as safety net
@@ -192,7 +193,7 @@ class GuestyClient:
                     title = t.get("title", "").lower()
                     if "turnover" not in title:
                         continue
-                    # Ensure canStartAfter falls on today
+                    # Ensure canStartAfter or startTime falls on today
                     can_start = t.get("canStartAfter") or t.get("startTime") or ""
                     if can_start and today_date not in can_start[:10]:
                         continue
