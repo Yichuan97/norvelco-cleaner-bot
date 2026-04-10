@@ -169,23 +169,36 @@ async def test_set_before_phase(request: Request):
     task_manager._state["photo_counts"].pop(f"{phone}:photo_count", None)
     task_manager._save_state()
 
+    # Normalise phone: add US country code if 10 digits
+    wa_phone = phone if len(phone) >= 11 else f"1{phone}"
+
     # Send a WhatsApp message so the cleaner knows what to do
     required = settings.REQUIRED_BEFORE_PHOTOS
-    await whatsapp.send_text(
-        phone,
-        f"🧪 *[TEST MODE]* Unit: *{unit_name}*\n\n"
-        f"📸 Please send {required} BEFORE photo(s) to test the damage detection system.\n\n"
-        f"Tip: try a photo with visible damage (scratch, stain, broken item) to see what the AI flags!"
-    )
+    wa_status = "sent"
+    wa_error = None
+    try:
+        await whatsapp.send_text(
+            wa_phone,
+            f"🧪 *[TEST MODE]* Unit: *{unit_name}*\n\n"
+            f"📸 Please send {required} BEFORE photo(s) to test the damage detection system.\n\n"
+            f"Tip: try a photo with visible damage (scratch, stain, broken item) to see what the AI flags!"
+        )
+    except Exception as e:
+        wa_status = "failed"
+        wa_error = str(e)
+        logger.error(f"❌ Test WhatsApp send failed: {e}")
 
-    logger.info(f"🧪 Test: phone {phone} set to before-phase for unit '{unit_name}'")
+    logger.info(f"🧪 Test: phone {phone} ({wa_phone}) set to before-phase for unit '{unit_name}'. WA: {wa_status}")
     return {
         "status": "ok",
         "phone": phone,
+        "wa_phone": wa_phone,
         "unit": unit_name,
         "phase": "before",
         "required_before_photos": required,
-        "message": f"WhatsApp message sent to {phone}. Now send {required} photo(s) to the bot."
+        "whatsapp": wa_status,
+        "whatsapp_error": wa_error,
+        "message": f"State set. WA send: {wa_status}. Send {required} photo(s) to the bot."
     }
 
 

@@ -17,11 +17,11 @@ Phone numbers in international format without '+': e.g. 17705272219
 ASSIGNEE_TO_CLEANER: dict[str, dict] = {
     # TEST MODE: using proxy numbers so real cleaners aren't messaged yet.
     # When ready to go live, replace each phone with the cleaner's real WhatsApp number.
-    "6995a59b843d592f55246db5": {"phone": "7706249539", "name": "Alis Sales"},       # → Lui (test)
-    "6995a820843d592f552479e3": {"phone": "7706249539", "name": "Cleonice Brito"},   # → Lui (test)
-    "6995eb72c44144456218ab1f": {"phone": "7705272219", "name": "Geraldina Quiroz"}, # → Talita (test)
-    "6995a6e3c44144456216d6dc": {"phone": "7705272219", "name": "Norelkis Nieves"},  # → Talita (test)
-    "699a61055012f3ee4cb37a6a": {"phone": "6789897818", "name": "Vanilza Debora"},   # → Gabi (test)
+    "6995a59b843d592f55246db5": {"phone": "17706249539", "name": "Alis Sales"},       # → Lui (test)
+    "6995a820843d592f552479e3": {"phone": "17706249539", "name": "Cleonice Brito"},   # → Lui (test)
+    "6995eb72c44144456218ab1f": {"phone": "17705272219", "name": "Geraldina Quiroz"}, # → Talita (test)
+    "6995a6e3c44144456216d6dc": {"phone": "17705272219", "name": "Norelkis Nieves"},  # → Talita (test)
+    "699a61055012f3ee4cb37a6a": {"phone": "16789897818", "name": "Vanilza Debora"},   # → Gabi (test)
 }
 
 # ─── Listing ID → Unit nickname (for display in task messages) ────────────────
